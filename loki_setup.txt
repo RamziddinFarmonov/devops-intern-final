@@ -1,0 +1,43 @@
+Loki Monitoring Setup
+======================
+
+How Loki was started:
+- Loki, Promtail, and Grafana are run together via Docker Compose
+  (monitoring/docker-compose.yml).
+- Command: docker compose up -d
+- Loki listens on port 3100, Grafana on port 3000.
+- Promtail auto-discovers all running Docker containers via the Docker
+  daemon (docker_sd_configs) and streams their logs to Loki. This
+  includes containers launched by Nomad, since Nomad ultimately runs
+  tasks as regular Docker containers on the same host.
+
+Command used to view logs:
+1. Open Grafana at http://localhost:3000 (login: admin/admin)
+2. Add Loki as a data source (done once):
+   Connections -> Data sources -> Add data source -> Loki
+   URL: http://loki:3100
+3. Go to Explore, select the Loki data source, and run:
+   {container=~"hello-task.+"}
+   (Nomad names its Docker containers "hello-task-<alloc-id>-...",
+   so this pattern reliably matches the job's container.)
+
+Verification:
+- Ran: nomad job run nomad/hello.nomad
+- Confirmed "Hello, DevOps!" appeared in Grafana Explore within seconds.
+
+Notes / gotchas encountered:
+- The "hello" job is a short-lived batch task, so the container exits
+  almost immediately after printing its output. To give Promtail's
+  discovery loop (5s interval) a chance to pick up the container before
+  it exits, the task command was changed to:
+      command = "/bin/sh"
+      args    = ["-c", "python hello.py && sleep 20"]
+  This keeps the container alive for 20s after printing, which is
+  enough time for Promtail to discover it and Loki to ingest the log.
+- The Docker image is served from a local registry (localhost:5000)
+  instead of only the local image cache. Nomad's Docker driver
+  periodically garbage-collects images that aren't referenced by any
+  running allocation; without a registry, the image would disappear
+  between runs and Nomad would fail with "pull access denied" on the
+  next job run. Pushing to a local registry gives Nomad a real,
+  always-available source to pull from.
